@@ -5,17 +5,27 @@
 // Processing版 R4_main.pde の移植。数値はオリジナルに合わせている。
 // =====================================================================
 
-// ----- 定数（Processing版と同じ値） -----
+// ----- 定数 -----
 const W = 1280, H = 960;
-const NOTE_SIZE = 60;              // notessize
-const LANE_H = NOTE_SIZE + 10;     // レーンの高さ 70px
 const LANE_COUNT = 4;
-const SPEED = 600;                 // ノーツ速度 px/秒（元: 10px/フレーム @60fps）
-const SPAWN_X = 1280;              // ノーツ出現位置
-const HIT_MIN = 0, HIT_MAX = 130;  // 当たり判定（ノーツ左端のx）
-const BAR_X = 70;                  // 判定バーの位置
 const MUSIC_DELAY = 2.0;           // ゲーム開始から音楽再生までの遅延（秒）
 const MAX_SCORE = 1000;
+
+// ---- 3Dレーン（ノーツは奥から手前に流れる） ----
+const APPROACH = 2.0;              // 出現から判定ラインまでの秒数（旧横スクロール版と同じ）
+const HORIZON_Y = 300;             // レーン奥端（消失点側）のy
+const JUDGE_Y = 800;               // 判定ラインのy
+const FAR_LANE_W = 40;             // 奥での1レーン幅
+const NEAR_LANE_W = 170;           // 手前での1レーン幅
+const PERSPECTIVE_K = 3.0;         // 遠近の強さ（大きいほど手前で加速して見える）
+const G_BOTTOM = (H - HORIZON_Y) / (JUDGE_Y - HORIZON_Y); // レーンを画面下端まで延長する係数
+
+// 判定ウィンドウ（旧版の x∈[0,130) と同じ時間幅）
+const HIT_EARLY = 0.083;           // 早押し許容（秒）
+const HIT_LATE = 0.133;            // 遅押し許容（秒）
+const MISS_AT = 0.25;              // これより遅れたらミス確定
+
+const LANE_COLORS = ["#4db8ff", "#4ee08a", "#ffd94d", "#ff5c5c"];
 
 // ----- 曲データ（soundFiles / linesArray / lyricsArray / MusicBackArray の対応） -----
 // offset: 譜面と音楽のズレ補正（秒）。ノーツ時刻に加算される。
@@ -44,7 +54,6 @@ const SONGS = [
     offset: -2.285, candidates: [-2.285, 5.675, -3.02, 1.42, 0] },
 ];
 
-const NOTE_IMAGES = ["notesBlue.png", "notesGreen.png", "notesYellow.png", "notesRed.png"];
 const DRUM_FILES = [
   "maou_se_inst_drum1_tom3.mp3",   // レーン1
   "maou_se_inst_drum1_snare.mp3",  // レーン2
@@ -74,7 +83,10 @@ let gameStartTime = 0;   // performance.now() 基準（ms）
 let musicStarted = false;
 let totalScore = 0;      // ヒット数（Processing版の totalScore と同じ）
 let laneFlash = [0, 0, 0, 0];   // キー押下エフェクト（残り時間 秒）
-let hitPopups = [];      // {lane, t} ヒット表示
+let hitPopups = [];      // {lane, t, type:"hit"|"miss"} 判定表示
+let combo = 0;           // 連続ヒット数
+let maxCombo = 0;
+let comboPop = 0;        // コンボ数字の拡大アニメ（残り秒）
 
 // タイミング補正
 let noteOffset = 0;      // 現在の曲の補正値（秒）。ノーツ時刻に加算
@@ -130,7 +142,6 @@ function parseChart(text) {
 async function loadAssets() {
   const imageNames = [
     "title.png", "start.png", "LYRICS.png", "retry.png", "exit.png",
-    ...NOTE_IMAGES,
     ...SONGS.map(s => s.back),
   ];
   const tasks = [];
@@ -242,6 +253,9 @@ function startGame() {
   musicStarted = false;
   hitPopups = [];
   laneFlash = [0, 0, 0, 0];
+  combo = 0;
+  maxCombo = 0;
+  comboPop = 0;
   // タイミング補正（保存値 > 曲デフォルトの順で採用）
   noteOffset = getOffsetFor(selectedIndex);
   candIdx = SONGS[selectedIndex].candidates.indexOf(noteOffset);
@@ -424,22 +438,68 @@ function setOffset(v) {
   offsetFlash = 1.0;
 }
 
-// ノーツの現在x座標（左端）。音楽時刻 mt = 補正後のノーツ時刻 のとき x=80（判定バー上）。
-function noteX(note, mt) {
-  return SPAWN_X - (mt + MUSIC_DELAY - (note.time + noteOffset)) * SPEED;
+// ----- 3Dレーンの座標変換 -----
+function lerp(a, b, t) {
+  return a + (b - a) * t;
 }
 
-// 当たり判定（Processing版 checkHit と同じ範囲）
+// 判定時刻までの時間差（負=接近中、0=ジャスト、正=通過後）
+function noteDt(note, mt) {
+  return mt - (note.time + noteOffset);
+}
+
+// 進行度p（0=奥端、1=判定ライン）→ 描画補間係数g。
+// 遠くはゆっくり・手前ほど速く見える遠近感のある変換（射影変換）。
+function persp(p) {
+  return p / (p + PERSPECTIVE_K * (1 - p));
+}
+
+function laneCenterX(lane, g) {
+  return W / 2 + (lane - (LANE_COUNT - 1) / 2) * lerp(FAR_LANE_W, NEAR_LANE_W, g);
+}
+
+function laneEdgeX(edge, g) {
+  return W / 2 + (edge - LANE_COUNT / 2) * lerp(FAR_LANE_W, NEAR_LANE_W, g);
+}
+
+function highwayY(g) {
+  return lerp(HORIZON_Y, JUDGE_Y, g);
+}
+
+function roundRectPath(x, y, w, h, r) {
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x, y, w, h, r);
+  else ctx.rect(x, y, w, h);
+}
+
+// "#rrggbb" + alpha → "rgba(...)"
+function hexA(hex, a) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+// ヒット処理（キー判定・オートプレイ共通）
+function hitNote(note) {
+  note.judged = true;
+  note.hit = true;
+  totalScore++;
+  combo++;
+  if (combo > maxCombo) maxCombo = combo;
+  comboPop = 0.18;
+  laneFlash[note.lane] = Math.max(laneFlash[note.lane], 0.15);
+  hitPopups.push({ lane: note.lane, t: 0.45, type: "hit" });
+}
+
+// 当たり判定（時間幅は旧版の x∈[0,130) と同じ）
 function checkHit(lane) {
   const mt = musicTimeNow();
   for (const note of notes) {
     if (note.lane !== lane || note.judged) continue;
-    const x = noteX(note, mt);
-    if (x >= HIT_MIN && x < HIT_MAX) {
-      note.judged = true;
-      note.hit = true;
-      totalScore++;
-      hitPopups.push({ lane, t: 0.4 });
+    const dt = noteDt(note, mt);
+    if (dt >= -HIT_EARLY && dt <= HIT_LATE) {
+      hitNote(note);
       break;
     }
   }
@@ -459,27 +519,25 @@ function updatePlay(dt) {
     audio.play().catch(() => {});
   }
 
-  // オートプレイ: 判定バーの理想位置（x=80）を通過する瞬間に自動ヒット。
+  // オートプレイ: 判定ラインを通過する瞬間に自動ヒット。
   // ドラム音が曲のビートに乗って聞こえれば補正が合っている。
   if (autoplay) {
     for (const note of notes) {
       if (note.judged) continue;
-      const x = noteX(note, mt);
-      if (x <= 80 && x > -NOTE_SIZE) {
-        note.judged = true;
-        note.hit = true;
-        totalScore++;
-        laneFlash[note.lane] = 0.15;
-        hitPopups.push({ lane: note.lane, t: 0.4 });
+      const d = noteDt(note, mt);
+      if (d >= 0 && d <= MISS_AT) {
+        hitNote(note);
         playDrum(note.lane);
       }
     }
   }
 
-  // 画面外に出たノーツはミス確定
+  // 判定ウィンドウを過ぎたノーツはミス確定（コンボが切れる）
   for (const note of notes) {
-    if (!note.judged && noteX(note, mt) < -NOTE_SIZE) {
+    if (!note.judged && noteDt(note, mt) > MISS_AT) {
       note.judged = true;
+      combo = 0;
+      hitPopups.push({ lane: note.lane, t: 0.45, type: "miss" });
     }
   }
 
@@ -489,6 +547,7 @@ function updatePlay(dt) {
   }
   hitPopups = hitPopups.filter(p => (p.t -= dt) > 0);
   offsetFlash = Math.max(0, offsetFlash - dt);
+  comboPop = Math.max(0, comboPop - dt);
 }
 
 // スコア計算（Processing版: int notes = MaxScore / lines.length）
@@ -588,7 +647,7 @@ function drawLyrics() {
 function drawPlay() {
   const mt = musicTimeNow();
 
-  // 背景: 曲のジャケットを暗くして表示（Processing版はカメラ映像だった部分）
+  // 背景: 曲のジャケットを暗くして表示
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, W, H);
   const back = images[SONGS[selectedIndex].back];
@@ -596,83 +655,223 @@ function drawPlay() {
   ctx.drawImage(back, 0, 0, W, H);
   ctx.globalAlpha = 1;
 
-  // レーン背景（fill(90,100) 相当）
-  ctx.fillStyle = "rgba(90, 90, 90, 0.6)";
-  ctx.fillRect(0, 0, W, LANE_COUNT * LANE_H);
+  drawHighway();
+  drawLaneBeams();
+  drawJudgeLine();
+  drawNotes(mt);
+  drawHitEffects();
+  drawPlayHUD();
+}
 
-  // キー押下フラッシュ
-  for (let i = 0; i < LANE_COUNT; i++) {
-    if (laneFlash[i] > 0) {
-      ctx.fillStyle = `rgba(255, 255, 255, ${laneFlash[i] * 1.5})`;
-      ctx.fillRect(0, i * LANE_H, W, LANE_H);
-    }
-  }
+// レーン面（奥に向かって狭まる台形）と境界線
+function drawHighway() {
+  ctx.fillStyle = "rgba(0, 0, 12, 0.6)";
+  ctx.beginPath();
+  ctx.moveTo(laneEdgeX(0, 0), HORIZON_Y);
+  ctx.lineTo(laneEdgeX(LANE_COUNT, 0), HORIZON_Y);
+  ctx.lineTo(laneEdgeX(LANE_COUNT, G_BOTTOM), H);
+  ctx.lineTo(laneEdgeX(0, G_BOTTOM), H);
+  ctx.closePath();
+  ctx.fill();
 
-  // レーン区切り線と判定バー
-  ctx.strokeStyle = "#000";
-  ctx.lineWidth = 2;
   for (let i = 0; i <= LANE_COUNT; i++) {
+    const outer = (i === 0 || i === LANE_COUNT);
+    ctx.strokeStyle = outer ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.18)";
+    ctx.lineWidth = outer ? 3 : 1.5;
     ctx.beginPath();
-    ctx.moveTo(0, i * LANE_H);
-    ctx.lineTo(W, i * LANE_H);
+    ctx.moveTo(laneEdgeX(i, 0), HORIZON_Y);
+    ctx.lineTo(laneEdgeX(i, G_BOTTOM), H);
     ctx.stroke();
   }
-  ctx.fillStyle = "#000";
-  for (let i = 0; i < LANE_COUNT; i++) {
-    ctx.fillRect(BAR_X, i * (NOTE_SIZE + 5), (NOTE_SIZE + 5) / 2, NOTE_SIZE + 23);
-  }
 
-  // キー表示
-  ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
-  setFont(22, true);
-  for (let i = 0; i < LANE_COUNT; i++) {
-    ctx.fillText(LANE_KEY_LABEL[i], 8, i * LANE_H + LANE_H / 2 + 8);
-  }
+  // 奥端のライン
+  ctx.strokeStyle = "rgba(255,255,255,0.25)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(laneEdgeX(0, 0), HORIZON_Y);
+  ctx.lineTo(laneEdgeX(LANE_COUNT, 0), HORIZON_Y);
+  ctx.stroke();
+}
 
-  // ノーツ描画
+// キー押下時にレーンを奥に向かって光らせるビーム
+function drawLaneBeams() {
+  for (let i = 0; i < LANE_COUNT; i++) {
+    if (laneFlash[i] <= 0) continue;
+    const a = laneFlash[i] / 0.15;
+    const grad = ctx.createLinearGradient(0, JUDGE_Y, 0, HORIZON_Y);
+    grad.addColorStop(0, hexA(LANE_COLORS[i], 0.45 * a));
+    grad.addColorStop(1, hexA(LANE_COLORS[i], 0));
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(laneEdgeX(i, 1), JUDGE_Y);
+    ctx.lineTo(laneEdgeX(i + 1, 1), JUDGE_Y);
+    ctx.lineTo(laneEdgeX(i + 1, 0), HORIZON_Y);
+    ctx.lineTo(laneEdgeX(i, 0), HORIZON_Y);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+// 判定ラインと各レーンの受け皿・キー表示
+function drawJudgeLine() {
+  ctx.save();
+  ctx.shadowColor = "rgba(255,255,255,0.9)";
+  ctx.shadowBlur = 14;
+  ctx.strokeStyle = "rgba(255,255,255,0.9)";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(laneEdgeX(0, 1), JUDGE_Y);
+  ctx.lineTo(laneEdgeX(LANE_COUNT, 1), JUDGE_Y);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.textAlign = "center";
+  for (let i = 0; i < LANE_COUNT; i++) {
+    const cx = laneCenterX(i, 1);
+    const w = NEAR_LANE_W * 0.84, h = 30;
+    const flash = laneFlash[i] / 0.15;
+    if (flash > 0) {
+      ctx.fillStyle = hexA(LANE_COLORS[i], 0.35 * flash);
+      roundRectPath(cx - w / 2, JUDGE_Y - h / 2, w, h, 10);
+      ctx.fill();
+    }
+    ctx.strokeStyle = hexA(LANE_COLORS[i], 0.9);
+    ctx.lineWidth = 3;
+    roundRectPath(cx - w / 2, JUDGE_Y - h / 2, w, h, 10);
+    ctx.stroke();
+
+    ctx.fillStyle = hexA(LANE_COLORS[i], 0.85);
+    setFont(24, true);
+    ctx.fillText(LANE_KEY_LABEL[i], cx, JUDGE_Y + 58);
+  }
+  ctx.textAlign = "left";
+}
+
+// ノーツ（奥から手前へ。レーン色の光るバー）
+function drawNotes(mt) {
+  const visible = [];
   for (const note of notes) {
     if (note.judged) continue;
-    const x = noteX(note, mt);
-    if (x < -NOTE_SIZE || x > W) continue;   // 画面外（未出現含む）
-    ctx.drawImage(images[NOTE_IMAGES[note.lane]], x, note.lane * LANE_H, NOTE_SIZE, NOTE_SIZE);
+    const dt = noteDt(note, mt);
+    const p = 1 + dt / APPROACH;
+    if (p <= 0.02 || p >= 1.4) continue;
+    visible.push({ note, p, dt });
   }
+  visible.sort((a, b) => a.p - b.p); // 奥のノーツから描く
 
-  // ヒットエフェクト
+  for (const v of visible) {
+    const g = persp(Math.min(v.p, 1.45));
+    const laneW = lerp(FAR_LANE_W, NEAR_LANE_W, g);
+    const w = laneW * 0.84;
+    const h = Math.max(10, w * 0.28);
+    const x = laneCenterX(v.note.lane, g);
+    const y = highwayY(g);
+    const col = LANE_COLORS[v.note.lane];
+
+    ctx.save();
+    // 判定ラインを過ぎたら徐々にフェード
+    ctx.globalAlpha = v.dt > 0 ? Math.max(0, 1 - v.dt / MISS_AT) : 1;
+    ctx.shadowColor = col;
+    ctx.shadowBlur = 20 * g;
+    ctx.fillStyle = col;
+    roundRectPath(x - w / 2, y - h / 2, w, h, h / 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "rgba(255,255,255,0.8)";
+    roundRectPath(x - w * 0.38, y - h * 0.22, w * 0.76, h * 0.44, h * 0.22);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ヒットリング・HIT!/MISS表示
+function drawHitEffects() {
+  ctx.textAlign = "center";
   for (const p of hitPopups) {
-    ctx.fillStyle = `rgba(255, 220, 0, ${Math.min(1, p.t * 2.5)})`;
-    setFont(36, true);
-    ctx.fillText("HIT!", BAR_X + 60, p.lane * LANE_H + LANE_H / 2 + 10);
+    const cx = laneCenterX(p.lane, 1);
+    const prog = 1 - p.t / 0.45; // 0→1
+    if (p.type === "hit") {
+      ctx.strokeStyle = hexA(LANE_COLORS[p.lane], (1 - prog) * 0.9);
+      ctx.lineWidth = 1 + 4 * (1 - prog);
+      ctx.beginPath();
+      ctx.arc(cx, JUDGE_Y, 18 + prog * 60, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = `rgba(255,220,60,${1 - prog})`;
+      setFont(30, true);
+      ctx.fillText("HIT!", cx, JUDGE_Y - 55 - prog * 30);
+    } else {
+      ctx.fillStyle = `rgba(170,170,170,${1 - prog})`;
+      setFont(26, true);
+      ctx.fillText("MISS", cx, JUDGE_Y - 55 - prog * 12);
+    }
+  }
+  ctx.textAlign = "left";
+}
+
+// スコア・コンボなどのHUD
+function drawPlayHUD() {
+  // 曲名（左上）
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  setFont(26);
+  ctx.fillText("♪ " + SONGS[selectedIndex].title, 30, 48);
+
+  // スコア（右上）
+  const perNote = Math.floor(MAX_SCORE / notes.length);
+  ctx.textAlign = "right";
+  ctx.fillStyle = "rgba(255,255,255,0.6)";
+  setFont(20, true);
+  ctx.fillText("SCORE", W - 40, 42);
+  ctx.fillStyle = "#fff";
+  setFont(54, true);
+  ctx.fillText(String(totalScore * perNote), W - 40, 96);
+  ctx.fillStyle = "rgba(255,255,255,0.55)";
+  setFont(20);
+  ctx.fillText(`HIT ${totalScore} / ${notes.length}`, W - 40, 126);
+  ctx.textAlign = "left";
+
+  // コンボ（レーン中央の奥寄り）
+  if (combo >= 2) {
+    const scale = 1 + comboPop * 2.2;
+    ctx.textAlign = "center";
+    ctx.fillStyle = "rgba(255,215,80,0.95)";
+    setFont(Math.round(64 * scale), true);
+    ctx.fillText(String(combo), W / 2, 480);
+    ctx.fillStyle = "rgba(255,255,255,0.75)";
+    setFont(22, true);
+    ctx.fillText("COMBO", W / 2, 514);
+    ctx.textAlign = "left";
   }
 
-  // スコア表示
-  ctx.fillStyle = "#fff";
-  setFont(32);
-  ctx.fillText("Hit: " + totalScore + " / " + notes.length, 10, H - 30);
-  ctx.fillStyle = "#aaa";
-  setFont(20);
-  ctx.fillText("ESCで選曲に戻る", W - 220, H - 30);
+  // オートプレイ表示（上部中央）
+  if (autoplay) {
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffd400";
+    setFont(24, true);
+    ctx.fillText("AUTOPLAY中：ドラム音が曲のリズムに合っていれば補正OK", W / 2, 46);
+    ctx.textAlign = "left";
+  }
 
-  // タイミング補正表示
+  // タイミング補正（左下）
   const cands = SONGS[selectedIndex].candidates;
   const candInfo = candIdx >= 0 ? `候補${candIdx + 1}/${cands.length}` : "手動";
   const ms = (noteOffset >= 0 ? "+" : "") + Math.round(noteOffset * 1000);
-  ctx.fillStyle = offsetFlash > 0 ? "#ffd400" : "#aaa";
-  setFont(20);
-  ctx.fillText(`タイミング補正: ${ms}ms (${candInfo})   ←→:±10ms  Shift+←→:±100ms  Tab:候補切替  A:オートプレイ  0:補正なし`, 10, H - 65);
+  ctx.fillStyle = offsetFlash > 0 ? "#ffd400" : "rgba(255,255,255,0.45)";
+  setFont(18);
+  ctx.fillText(`タイミング補正: ${ms}ms (${candInfo})   ←→:±10ms  Shift+←→:±100ms  Tab:候補切替  A:オートプレイ  0:補正なし`, 20, H - 18);
 
-  // オートプレイ表示
-  if (autoplay) {
-    ctx.fillStyle = "#ffd400";
-    setFont(30, true);
-    ctx.fillText("AUTOPLAY中：ドラム音が曲のリズムに合っていれば補正OK", 300, LANE_COUNT * LANE_H + 50);
-  }
+  // ESCヒント（右下）
+  ctx.textAlign = "right";
+  ctx.fillStyle = "rgba(255,255,255,0.45)";
+  setFont(18);
+  ctx.fillText("ESC: 選曲に戻る", W - 20, H - 18);
+  ctx.textAlign = "left";
 
-  // 音楽開始前のカウント表示
+  // 音楽開始前
   if (!musicStarted) {
+    ctx.textAlign = "center";
     ctx.fillStyle = "#fff";
     setFont(60, true);
-    ctx.textAlign = "center";
-    ctx.fillText("READY...", W / 2, H / 2);
+    ctx.fillText("READY...", W / 2, 540);
     ctx.textAlign = "left";
   }
 }
@@ -731,6 +930,7 @@ function drawResult() {
   setFont(40);
   ctx.fillText("Hit：" + totalScore, W * 0.6, H * 0.6);
   ctx.fillText("Lost：" + (notes.length - totalScore), W * 0.6, H * 0.7);
+  ctx.fillText("Max Combo：" + maxCombo, W * 0.6, H * 0.78);
 
   if (autoplayUsed) {
     ctx.fillStyle = "#ffd400";
