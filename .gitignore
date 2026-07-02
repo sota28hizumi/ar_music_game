@@ -1,0 +1,11 @@
+# 配布用ビルド（JRE同梱で900MB超、GitHubの100MB/ファイル制限を超えるため除外）
+R4_main/finalAssingment/
+R4_main/finalAssingment_2.zip
+*.zip
+
+# Claude Code のローカル設定（個人環境依存）
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.pyc

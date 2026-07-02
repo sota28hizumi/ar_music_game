@@ -1,0 +1,332 @@
+{
+  "Processing": {
+    "best_feasible": -1.34,
+    "feasible_range": [
+      -2.31,
+      0.63
+    ],
+    "top_peaks": [
+      {
+        "offset": -1.34,
+        "score": 0.0835
+      },
+      {
+        "offset": -1.885,
+        "score": 0.0829
+      },
+      {
+        "offset": -0.28,
+        "score": 0.0826
+      },
+      {
+        "offset": -0.82,
+        "score": 0.0791
+      }
+    ],
+    "global_best": 5.552,
+    "median_score": 0.0356,
+    "duration": 120.0,
+    "notes": 126,
+    "chart_span": [
+      2.31,
+      119.67
+    ]
+  },
+  "BAD UI": {
+    "best_feasible": -3.395,
+    "feasible_range": [
+      -4.61,
+      2.86
+    ],
+    "top_peaks": [
+      {
+        "offset": -3.395,
+        "score": 0.1867
+      },
+      {
+        "offset": -0.125,
+        "score": 0.1831
+      },
+      {
+        "offset": -1.315,
+        "score": 0.1823
+      },
+      {
+        "offset": -4.58,
+        "score": 0.182
+      }
+    ],
+    "global_best": -3.395,
+    "median_score": 0.0436,
+    "duration": 101.6,
+    "notes": 98,
+    "chart_span": [
+      4.61,
+      99.06
+    ]
+  },
+  "Invisible Data": {
+    "best_feasible": -5.375,
+    "feasible_range": [
+      -8.04,
+      4.24
+    ],
+    "top_peaks": [
+      {
+        "offset": -5.375,
+        "score": 0.1375
+      },
+      {
+        "offset": 0.64,
+        "score": 0.137
+      },
+      {
+        "offset": -1.08,
+        "score": 0.1368
+      },
+      {
+        "offset": -3.865,
+        "score": 0.1361
+      }
+    ],
+    "global_best": -5.377,
+    "median_score": 0.0644,
+    "duration": 150.6,
+    "notes": 182,
+    "chart_span": [
+      8.04,
+      146.7
+    ]
+  },
+  "婉曲モダリティ": {
+    "best_feasible": 0.925,
+    "feasible_range": [
+      -8.11,
+      1.74
+    ],
+    "top_peaks": [
+      {
+        "offset": 0.925,
+        "score": 0.1638
+      },
+      {
+        "offset": -0.84,
+        "score": 0.1618
+      },
+      {
+        "offset": 0.04,
+        "score": 0.16
+      },
+      {
+        "offset": -3.49,
+        "score": 0.1585
+      }
+    ],
+    "global_best": 2.691,
+    "median_score": 0.0603,
+    "duration": 107.0,
+    "notes": 117,
+    "chart_span": [
+      8.11,
+      105.56
+    ]
+  },
+  "仮想領域現実感": {
+    "best_feasible": -1.79,
+    "feasible_range": [
+      -8.14,
+      2.23
+    ],
+    "top_peaks": [
+      {
+        "offset": -1.79,
+        "score": 0.0931
+      },
+      {
+        "offset": 1.905,
+        "score": 0.0902
+      },
+      {
+        "offset": 0.985,
+        "score": 0.0895
+      },
+      {
+        "offset": -0.865,
+        "score": 0.0894
+      }
+    ],
+    "global_best": 5.597,
+    "median_score": 0.0343,
+    "duration": 196.5,
+    "notes": 253,
+    "chart_span": [
+      8.14,
+      194.54
+    ]
+  },
+  "RW Interaction": {
+    "best_feasible": 0.025,
+    "feasible_range": [
+      -5.64,
+      2.25
+    ],
+    "top_peaks": [
+      {
+        "offset": 0.025,
+        "score": 0.1881
+      },
+      {
+        "offset": -1.195,
+        "score": 0.1859
+      },
+      {
+        "offset": 1.255,
+        "score": 0.1851
+      },
+      {
+        "offset": -4.875,
+        "score": 0.184
+      }
+    ],
+    "global_best": 3.7,
+    "median_score": 0.0601,
+    "duration": 220.1,
+    "notes": 278,
+    "chart_span": [
+      5.64,
+      218.16
+    ]
+  },
+  "テン、二大原則": {
+    "best_feasible": -5.435,
+    "feasible_range": [
+      -8.65,
+      5.0
+    ],
+    "top_peaks": [
+      {
+        "offset": -5.435,
+        "score": 0.0948
+      },
+      {
+        "offset": -2.625,
+        "score": 0.0926
+      },
+      {
+        "offset": -1.685,
+        "score": 0.0919
+      },
+      {
+        "offset": -4.5,
+        "score": 0.0911
+      }
+    ],
+    "global_best": -5.436,
+    "median_score": 0.0363,
+    "duration": 185.0,
+    "notes": 290,
+    "chart_span": [
+      8.65,
+      180.26
+    ]
+  },
+  "Open CoVenant": {
+    "best_feasible": 1.38,
+    "feasible_range": [
+      -12.63,
+      5.71
+    ],
+    "top_peaks": [
+      {
+        "offset": 1.38,
+        "score": 0.1184
+      },
+      {
+        "offset": 0.04,
+        "score": 0.1181
+      },
+      {
+        "offset": 2.73,
+        "score": 0.1176
+      },
+      {
+        "offset": -5.355,
+        "score": 0.1151
+      }
+    ],
+    "global_best": 1.38,
+    "median_score": 0.0591,
+    "duration": 167.1,
+    "notes": 159,
+    "chart_span": [
+      12.63,
+      161.65
+    ]
+  },
+  "AdveNyAr!": {
+    "best_feasible": -4.235,
+    "feasible_range": [
+      -7.11,
+      2.81
+    ],
+    "top_peaks": [
+      {
+        "offset": -4.235,
+        "score": 0.1221
+      },
+      {
+        "offset": -5.71,
+        "score": 0.1221
+      },
+      {
+        "offset": -2.745,
+        "score": 0.12
+      },
+      {
+        "offset": -4.965,
+        "score": 0.1187
+      }
+    ],
+    "global_best": -4.233,
+    "median_score": 0.0615,
+    "duration": 148.6,
+    "notes": 237,
+    "chart_span": [
+      7.11,
+      146.08
+    ]
+  },
+  "HCI": {
+    "best_feasible": -2.285,
+    "feasible_range": [
+      -12.7,
+      6.02
+    ],
+    "top_peaks": [
+      {
+        "offset": -2.285,
+        "score": 0.0859
+      },
+      {
+        "offset": 5.675,
+        "score": 0.0859
+      },
+      {
+        "offset": -3.02,
+        "score": 0.0858
+      },
+      {
+        "offset": 1.42,
+        "score": 0.0853
+      }
+    ],
+    "global_best": -2.286,
+    "median_score": 0.0444,
+    "duration": 142.4,
+    "notes": 229,
+    "chart_span": [
+      12.7,
+      136.64
+    ]
+  }
+}
