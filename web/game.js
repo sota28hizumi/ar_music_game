@@ -65,6 +65,35 @@ const DRUM_FILES = [
 const KEY_TO_LANE = { "1": 0, "2": 1, "3": 2, "4": 3, "d": 0, "f": 1, "j": 2, "k": 3 };
 const LANE_KEY_LABEL = ["1 / D", "2 / F", "3 / J", "4 / K"];
 
+// ----- タップ音の楽器（レーンごとに音程が異なる統一楽器） -----
+const INSTRUMENTS = [
+  { id: "marimba", name: "マリンバ" },
+  { id: "piano",   name: "ピアノ" },
+  { id: "synth",   name: "シンセ" },
+  { id: "bell",    name: "ベル" },
+  { id: "tom",     name: "タム（音程違い）" },
+  { id: "classic", name: "ドラムセット（従来）" },
+];
+
+// レーン1〜4の音程（Hz）。楽器ごとに聞きやすい音域にしてある。
+const TAP_NOTES = {
+  marimba: [523.25, 587.33, 659.25, 783.99],   // C5 D5 E5 G5
+  piano:   [261.63, 329.63, 392.00, 523.25],   // C4 E4 G4 C5
+  synth:   [523.25, 587.33, 659.25, 783.99],   // C5 D5 E5 G5
+  bell:    [659.25, 783.99, 880.00, 1046.50],  // E5 G5 A5 C6
+};
+
+// シンセ音色: partials = [倍音倍率, 音量比, 減衰秒] の配列
+const SYNTH_PATCHES = {
+  marimba: { wave: "sine",   attack: 0.002, gain: 0.50, partials: [[1, 1, 0.45], [4, 0.20, 0.12]] },
+  piano:   { wave: "sine",   attack: 0.002, gain: 0.40, partials: [[1, 1, 0.80], [2, 0.35, 0.50], [3, 0.12, 0.25]] },
+  synth:   { wave: "square", attack: 0.001, gain: 0.22, partials: [[1, 1, 0.20]] },
+  bell:    { wave: "sine",   attack: 0.002, gain: 0.32, partials: [[1, 1, 1.10], [2.76, 0.40, 0.70], [5.40, 0.12, 0.40]] },
+};
+
+// 「タム（音程違い）」用の再生速度（ルート・長3度・完全5度・オクターブ）
+const TOM_RATES = [1.0, 1.26, 1.5, 2.0];
+
 // ----- キャンバス -----
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -95,6 +124,9 @@ let autoplay = false;    // オートプレイ（補正の耳確認用）
 let autoplayUsed = false;
 let offsetFlash = 0;     // 補正変更直後の表示ハイライト（残り秒）
 let clockAnchor = null;  // 音声クロック同期用アンカー（平滑化済み）
+
+// タップ音の楽器（localStorageに保存）
+let instrumentIdx = Math.max(0, INSTRUMENTS.findIndex(i => i.id === localStorage.getItem("tapInstrument")));
 
 // ----- アセット -----
 const images = {};       // name -> Image
@@ -201,13 +233,56 @@ function leadingSilence(buffer) {
   return 0;
 }
 
-function playDrum(lane) {
-  if (!audioCtx || !drumBuffers[lane]) return;
+// レーンのタップ音を鳴らす（選択中の楽器で、レーンごとに異なる音程）
+function playTap(lane) {
+  if (!audioCtx) return;
   if (audioCtx.state === "suspended") audioCtx.resume();
+  const inst = INSTRUMENTS[instrumentIdx].id;
+  if (inst === "classic") {
+    playDrumSample(lane, 1.0);          // 従来: レーンごとに別のドラム音
+  } else if (inst === "tom") {
+    playDrumSample(0, TOM_RATES[lane]); // タムを音程を変えて再生
+  } else {
+    playSynthTap(inst, lane);
+  }
+}
+
+function playDrumSample(idx, rate) {
+  if (!drumBuffers[idx]) return;
   const src = audioCtx.createBufferSource();
-  src.buffer = drumBuffers[lane].buffer;
+  src.buffer = drumBuffers[idx].buffer;
+  src.playbackRate.value = rate;
   src.connect(audioCtx.destination);
-  src.start(0, drumBuffers[lane].offset);
+  src.start(0, drumBuffers[idx].offset);
+}
+
+// Web Audioでシンセ音を合成して再生
+function playSynthTap(inst, lane) {
+  const patch = SYNTH_PATCHES[inst];
+  const base = TAP_NOTES[inst][lane];
+  const t0 = audioCtx.currentTime;
+  for (const [mult, vol, decay] of patch.partials) {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = patch.wave;
+    osc.frequency.value = base * mult;
+    gain.gain.setValueAtTime(0, t0);
+    gain.gain.linearRampToValueAtTime(patch.gain * vol, t0 + patch.attack);
+    gain.gain.exponentialRampToValueAtTime(0.0005, t0 + decay);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(t0);
+    osc.stop(t0 + decay + 0.05);
+  }
+}
+
+// 楽器を切り替えて保存し、4レーン分を試聴（アルペジオ）
+function setInstrument(idx) {
+  instrumentIdx = (idx + INSTRUMENTS.length) % INSTRUMENTS.length;
+  localStorage.setItem("tapInstrument", INSTRUMENTS[instrumentIdx].id);
+  for (let i = 0; i < LANE_COUNT; i++) {
+    setTimeout(() => playTap(i), i * 130);
+  }
 }
 
 function getMusic(index) {
@@ -300,6 +375,11 @@ canvas.addEventListener("mousedown", e => {
       gotoSelect();
     }
   } else if (state === "select") {
+    // 楽器セレクター（◀ / ▶・名前クリックで切替）
+    if (p.y > 122 && p.y < 168) {
+      if (p.x > 875 && p.x < 925) { setInstrument(instrumentIdx - 1); return; }
+      if (p.x > 940 && p.x < 1245) { setInstrument(instrumentIdx + 1); return; }
+    }
     // 表示中の曲リスト（i=-2..2）をクリック → 選択 / 選択中の曲なら開始
     for (let i = -2; i <= 2; i++) {
       const idx = selectedIndex + i;
@@ -374,7 +454,7 @@ window.addEventListener("keydown", e => {
     const lane = KEY_TO_LANE[e.key.toLowerCase()];
     if (lane !== undefined) {
       laneFlash[lane] = 0.15;
-      playDrum(lane);
+      playTap(lane);
       checkHit(lane);
     }
     return;
@@ -385,6 +465,7 @@ window.addEventListener("keydown", e => {
     if (e.key === "Enter") { startGame(); return; }
     if (e.key === "ArrowUp") { changeSelection((selectedIndex + SONGS.length - 1) % SONGS.length); return; }
     if (e.key === "ArrowDown") { changeSelection((selectedIndex + 1) % SONGS.length); return; }
+    if (e.key.toLowerCase() === "s") { setInstrument(instrumentIdx + 1); return; }
   } else if (state === "result") {
     if (e.key === "Enter") { startGame(); return; }
     if (e.key === "Escape") { state = "title"; return; }
@@ -527,7 +608,7 @@ function updatePlay(dt) {
       const d = noteDt(note, mt);
       if (d >= 0 && d <= MISS_AT) {
         hitNote(note);
-        playDrum(note.lane);
+        playTap(note.lane);
       }
     }
   }
@@ -596,6 +677,19 @@ function drawSelect() {
   setFont(63);
   ctx.fillText("曲を選択してください", W * 0.04, H * 0.15);
 
+  // タップ音の楽器セレクター（◀▶クリック / Sキーで切替）
+  ctx.fillStyle = "#ccc";
+  setFont(24);
+  ctx.fillText("タップ音：", W * 0.6, 152);
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#fff";
+  setFont(28, true);
+  ctx.fillText("◀", 900, 152);
+  ctx.fillText("▶", 1220, 152);
+  setFont(24, true);
+  ctx.fillText(INSTRUMENTS[instrumentIdx].name, 1060, 152);
+  ctx.textAlign = "left";
+
   // 選択肢（selectedIndex を中心に前後2曲ずつ表示）
   for (let i = -2; i <= 2; i++) {
     const idx = selectedIndex + i;
@@ -625,7 +719,7 @@ function drawSelect() {
   // 操作ガイド
   ctx.fillStyle = "#ccc";
   setFont(24);
-  ctx.fillText("ホイール / ↑↓ で選曲、ENTER または曲名クリックで開始", W * 0.04, H * 0.95);
+  ctx.fillText("ホイール / ↑↓ で選曲、ENTER または曲名クリックで開始 ／ S: タップ音変更", W * 0.04, H * 0.95);
 }
 
 function drawLyrics() {
@@ -977,6 +1071,7 @@ function clickableAt(p) {
     return p.x > W / 2 - 150 && p.x < W / 2 + 150 && p.y > H / 2 + 250 && p.y < H / 2 + 350;
   }
   if (state === "select") {
+    if (p.y > 122 && p.y < 168 && p.x > 875 && p.x < 1245) return true;
     for (let i = -2; i <= 2; i++) {
       const idx = selectedIndex + i;
       if (idx < 0 || idx >= SONGS.length) continue;
@@ -1001,6 +1096,9 @@ window.__game = {
   get autoplay() { return autoplay; },
   set autoplay(v) { autoplay = v; if (v) autoplayUsed = true; },
   get musicTime() { return musicTimeNow(); },
+  get instrument() { return INSTRUMENTS[instrumentIdx].id; },
+  setInstrument,
+  playTap,
   setOffset,
   gotoSelect, startGame, endGame,
   select(i) { changeSelection(i); },
