@@ -726,15 +726,17 @@ function drawLyrics() {
   ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
   ctx.fillRect(30, 270, 700, 600);
   const lines = lyrics[selectedIndex];
+  // 行数が多い曲でも枠内に収まるよう行間・文字サイズを自動調整
+  const rows = Math.ceil(lines.length / 2);
+  const rowH = Math.min(30, 560 / rows);
+  const colX = [45, 390];
+  const colW = 330; // 列の最大幅。長い行はfillTextのmaxWidthで自動的に横へ詰める
+  setFont(Math.min(21, Math.round(rowH * 0.72)));
   ctx.fillStyle = "rgb(230,230,230)";
-  setFont(21);
-  const half = Math.floor(lines.length / 2);
   for (let i = 0; i < lines.length; i++) {
-    if (i < half) {
-      ctx.fillText(lines[i], 40, 300 + 30 * i);
-    } else {
-      ctx.fillText(lines[i], 400, 300 + 30 * (i - half));
-    }
+    const col = i < rows ? 0 : 1;
+    const row = col === 0 ? i : i - rows;
+    ctx.fillText(lines[i], colX[col], 300 + rowH * row, colW);
   }
 }
 
